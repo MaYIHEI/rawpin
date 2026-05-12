@@ -1,0 +1,1165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="把任意图标洗成代理脚本规范的 256×256 PNG。支持 App Store 按名字搜、任意图片 URL、本地上传。">
+<title>rawpin — icon pipeline</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,800&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+    :root {
+        --paper: #f4f1ea;
+        --paper-2: #ece7dc;
+        --ink: #1a1a1a;
+        --ink-2: #4a4a4a;
+        --ink-3: #8a8a8a;
+        --rule: #d8d2c4;
+        --accent: #2c6e49;
+        --warn: #a8401d;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+        background: var(--paper);
+        color: var(--ink);
+        font-family: 'Noto Sans SC', system-ui, sans-serif;
+        font-size: 16px;
+        line-height: 1.55;
+        -webkit-font-smoothing: antialiased;
+    }
+    body {
+        min-height: 100vh;
+        background-image:
+            radial-gradient(rgba(0,0,0,0.018) 1px, transparent 1px),
+            radial-gradient(rgba(0,0,0,0.012) 1px, transparent 1px);
+        background-size: 14px 14px, 7px 7px;
+        background-position: 0 0, 3px 4px;
+        padding: 48px 20px 80px;
+    }
+    .wrap { max-width: 760px; margin: 0 auto; }
+
+    /* masthead */
+    .masthead {
+        display: flex; justify-content: space-between; align-items: baseline;
+        padding-bottom: 18px; border-bottom: 1.5px solid var(--ink);
+        margin-bottom: 32px;
+    }
+    .brand {
+        font-family: 'Fraunces', serif;
+        font-weight: 800; font-size: 28px;
+        letter-spacing: -0.02em; line-height: 1;
+    }
+    .brand .dot { color: var(--accent); }
+    .masthead .meta {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px; color: var(--ink-3);
+        letter-spacing: 0.05em; text-transform: uppercase;
+    }
+    .lede {
+        font-family: 'Fraunces', serif; font-weight: 400;
+        font-size: 26px; line-height: 1.3;
+        margin-bottom: 6px;
+    }
+    .lede em { font-style: italic; color: var(--accent); }
+    .sub { color: var(--ink-2); font-size: 14px; margin-bottom: 28px; }
+
+    /* tabs */
+    .tabs {
+        display: flex; gap: 0;
+        border-bottom: 1.5px solid var(--ink);
+        margin-bottom: 24px;
+    }
+    .tab {
+        background: transparent;
+        border: none; border-bottom: 2px solid transparent;
+        padding: 12px 18px;
+        font-family: 'Noto Sans SC', sans-serif;
+        font-size: 14px; font-weight: 500;
+        color: var(--ink-3);
+        cursor: pointer;
+        margin-bottom: -1.5px;
+        transition: all 0.15s;
+    }
+    .tab:hover { color: var(--ink-2); }
+    .tab.active {
+        color: var(--ink); font-weight: 700;
+        border-bottom-color: var(--accent);
+    }
+
+    /* form pane */
+    .pane { display: none; }
+    .pane.active { display: block; }
+    .form-row {
+        display: flex; gap: 10px; margin-bottom: 8px;
+    }
+    .input {
+        flex: 1;
+        background: #fff;
+        border: 1.5px solid var(--ink);
+        padding: 14px 16px;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 14px; color: var(--ink);
+        outline: none;
+        transition: background 0.15s;
+        min-width: 0;
+    }
+    .input.sans { font-family: 'Noto Sans SC', sans-serif; }
+    .input:focus { background: #fffef8; }
+    .input::placeholder { color: var(--ink-3); }
+    .select {
+        background: #fff;
+        border: 1.5px solid var(--ink);
+        padding: 14px 12px;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 13px; color: var(--ink);
+        outline: none;
+        cursor: pointer;
+    }
+    .btn {
+        background: var(--ink); color: var(--paper);
+        border: 1.5px solid var(--ink);
+        padding: 0 22px;
+        font-family: 'Noto Sans SC', sans-serif;
+        font-size: 14px; font-weight: 700;
+        letter-spacing: 0.05em;
+        cursor: pointer;
+        transition: all 0.15s;
+        min-width: 84px;
+    }
+    .btn:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); }
+    .btn:disabled { opacity: 0.5; cursor: wait; }
+    .hint {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px; color: var(--ink-3);
+        margin-bottom: 24px;
+    }
+
+    /* drop zone for upload */
+    .drop {
+        display: block;
+        position: relative;
+        border: 1.5px dashed var(--ink);
+        background: #fff;
+        padding: 40px 20px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    .drop.dragging { background: var(--paper-2); border-color: var(--accent); }
+    .drop-icon {
+        width: 40px; height: 40px;
+        margin: 0 auto 12px;
+        display: flex; align-items: center; justify-content: center;
+        opacity: 0.4;
+    }
+    .drop-text {
+        font-family: 'Fraunces', serif; font-size: 18px;
+        margin-bottom: 4px;
+    }
+    .drop-sub {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px; color: var(--ink-3);
+    }
+    .drop input[type="file"] {
+        position: absolute;
+        width: 1px; height: 1px;
+        opacity: 0;
+        pointer-events: none;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+    }
+
+    /* search results grid */
+    .results {
+        margin-top: 24px;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 12px;
+    }
+    .result-card {
+        background: #fff;
+        border: 1.5px solid var(--rule);
+        padding: 12px;
+        cursor: pointer;
+        transition: all 0.15s;
+        text-align: center;
+    }
+    .result-card:hover { border-color: var(--ink); transform: translateY(-2px); }
+    .result-card.picked {
+        border-color: var(--accent); border-width: 1.5px;
+        box-shadow: 0 0 0 2px var(--accent) inset;
+    }
+    .result-img {
+        width: 100%; aspect-ratio: 1;
+        border: 1px solid var(--rule);
+        background: var(--paper-2);
+        object-fit: cover;
+        display: block;
+        margin-bottom: 8px;
+    }
+    .result-name {
+        font-size: 12px; line-height: 1.3;
+        color: var(--ink);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-weight: 500;
+    }
+    .result-author {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 10px; color: var(--ink-3);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        margin-top: 2px;
+    }
+
+    /* preview / crop panel */
+    .editor {
+        margin-top: 24px;
+        background: #fff;
+        border: 1.5px solid var(--ink);
+        padding: 24px;
+        animation: rise 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+    @keyframes rise {
+        from { opacity: 0; transform: translateY(8px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    .editor-head {
+        display: flex; gap: 16px; align-items: flex-start;
+        margin-bottom: 20px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--rule);
+    }
+    .editor-source {
+        font-family: 'Fraunces', serif;
+        font-size: 16px;
+        flex: 1; min-width: 0;
+        word-break: break-all;
+    }
+    .editor-source small {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        color: var(--ink-3);
+        display: block;
+        margin-top: 2px;
+    }
+    .editor-body {
+        display: grid;
+        grid-template-columns: 220px 1fr;
+        gap: 24px;
+    }
+    @media (max-width: 600px) {
+        .editor-body { grid-template-columns: 1fr; }
+    }
+    .preview-box {
+        width: 220px; height: 220px;
+        background: var(--paper-2);
+        background-image:
+            linear-gradient(45deg, #e0d9c9 25%, transparent 25%),
+            linear-gradient(-45deg, #e0d9c9 25%, transparent 25%),
+            linear-gradient(45deg, transparent 75%, #e0d9c9 75%),
+            linear-gradient(-45deg, transparent 75%, #e0d9c9 75%);
+        background-size: 16px 16px;
+        background-position: 0 0, 0 8px, 8px -8px, -8px 0px;
+        position: relative;
+        display: flex; align-items: center; justify-content: center;
+    }
+    .preview-canvas { max-width: 100%; max-height: 100%; }
+    .controls { display: flex; flex-direction: column; gap: 14px; }
+    .control-row { display: flex; flex-direction: column; gap: 6px; }
+    .control-label {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 10px;
+        color: var(--ink-3);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+    }
+    .slider {
+        -webkit-appearance: none;
+        width: 100%; height: 4px;
+        background: var(--rule);
+        outline: none;
+    }
+    .slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 16px; height: 16px;
+        background: var(--ink);
+        cursor: pointer;
+        border-radius: 0;
+    }
+    .slider::-moz-range-thumb {
+        width: 16px; height: 16px;
+        background: var(--ink);
+        cursor: pointer;
+        border: none; border-radius: 0;
+    }
+    .slider-value {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        color: var(--ink-2);
+        text-align: right;
+    }
+    .size-toggle {
+        display: flex; gap: 0;
+        border: 1.5px solid var(--ink);
+    }
+    .size-btn {
+        flex: 1;
+        background: transparent;
+        border: none;
+        padding: 8px 4px;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        cursor: pointer;
+        color: var(--ink-2);
+        transition: all 0.15s;
+        border-right: 1px solid var(--ink);
+    }
+    .size-btn:last-child { border-right: none; }
+    .size-btn.active { background: var(--ink); color: var(--paper); font-weight: 700; }
+    .name-input {
+        background: #fff;
+        border: 1px solid var(--rule);
+        padding: 8px 10px;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 12px;
+        outline: none;
+        width: 100%;
+    }
+    .name-input:focus { border-color: var(--ink); }
+
+    .actions {
+        margin-top: 20px; padding-top: 18px;
+        border-top: 1px solid var(--rule);
+        display: flex; gap: 10px; flex-wrap: wrap;
+    }
+    .action {
+        background: transparent;
+        border: 1.5px solid var(--ink);
+        color: var(--ink);
+        padding: 10px 18px;
+        font-family: 'Noto Sans SC', sans-serif;
+        font-size: 13px; font-weight: 500;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    .action:hover:not(:disabled) { background: var(--ink); color: var(--paper); }
+    .action.primary { background: var(--ink); color: var(--paper); }
+    .action.primary:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); }
+    .action:disabled { opacity: 0.4; cursor: wait; }
+
+    /* error */
+    .error {
+        background: #fff;
+        border: 1.5px solid var(--warn);
+        padding: 16px 20px;
+        margin-top: 16px;
+    }
+    .error-title { font-family: 'Fraunces', serif; font-size: 16px; color: var(--warn); margin-bottom: 2px; }
+    .error-body { font-size: 13px; color: var(--ink-2); }
+
+    /* status */
+    .empty {
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--ink-3);
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 12px;
+    }
+    .spin {
+        display: inline-block;
+        width: 14px; height: 14px;
+        border: 2px solid var(--rule);
+        border-top-color: var(--ink);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        vertical-align: middle;
+        margin-right: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* recent exports strip */
+    .history-strip {
+        margin-top: 32px;
+        padding-top: 20px;
+        border-top: 1px dashed var(--rule);
+    }
+    .history-label {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 10px;
+        color: var(--ink-3);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        margin-bottom: 12px;
+    }
+    .history-items {
+        display: flex;
+        gap: 12px;
+        overflow-x: auto;
+        padding-bottom: 4px;
+    }
+    .history-item {
+        flex-shrink: 0;
+        width: 72px;
+        text-align: center;
+        position: relative;
+    }
+    .history-item img {
+        width: 64px; height: 64px;
+        border: 1px solid var(--rule);
+        background: var(--paper-2);
+        cursor: pointer;
+        transition: all 0.15s;
+        display: block;
+        margin: 0 auto 6px;
+    }
+    .history-item img:hover { border-color: var(--ink); transform: translateY(-2px); }
+    .history-name {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 10px;
+        color: var(--ink-2);
+        cursor: pointer;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .history-name:hover { color: var(--ink); }
+    .history-x {
+        position: absolute;
+        top: -4px; right: 4px;
+        background: var(--ink);
+        color: var(--paper);
+        border: none;
+        width: 16px; height: 16px;
+        border-radius: 50%;
+        font-size: 12px;
+        line-height: 14px;
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity 0.15s;
+    }
+    .history-item:hover .history-x { opacity: 1; }
+
+    /* footer */
+    .foot {
+        margin-top: 64px; padding-top: 20px;
+        border-top: 1px solid var(--rule);
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px; color: var(--ink-3);
+        display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+    }
+    .foot a { color: var(--ink-2); text-decoration: none; border-bottom: 1px solid var(--rule); }
+    .foot a:hover { color: var(--ink); border-bottom-color: var(--ink); }
+
+    /* toast */
+    .toast {
+        position: fixed;
+        bottom: 24px; left: 50%;
+        transform: translateX(-50%) translateY(20px);
+        background: var(--ink); color: var(--paper);
+        padding: 10px 18px;
+        font-size: 13px;
+        font-family: 'JetBrains Mono', monospace;
+        opacity: 0; pointer-events: none;
+        transition: all 0.25s;
+        z-index: 100;
+    }
+    .toast.show {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+
+    @media (max-width: 500px) {
+        body { padding: 32px 16px 64px; }
+        .lede { font-size: 22px; }
+        .form-row { flex-direction: column; }
+        .btn { padding: 14px; }
+        .tab { padding: 10px 12px; font-size: 13px; }
+        .editor { padding: 18px; }
+        .preview-box { width: 100%; aspect-ratio: 1; height: auto; }
+    }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+    <header class="masthead">
+        <div class="brand">rawpin<span class="dot">.</span></div>
+        <div class="meta">v1 · 2026</div>
+    </header>
+
+    <h1 class="lede">把任意图标洗成<em>规范图标</em>。</h1>
+    <p class="sub">App Store 按名字搜 · 任意图片 URL · 本地上传 → 自动裁成正方圆角 PNG。</p>
+
+    <nav class="tabs">
+        <button class="tab active" data-tab="app">App Store</button>
+        <button class="tab" data-tab="weapp">微信小程序</button>
+        <button class="tab" data-tab="url">图片 URL</button>
+        <button class="tab" data-tab="upload">本地上传</button>
+    </nav>
+
+    <!-- App Store search -->
+    <div class="pane active" data-pane="app">
+        <div class="form-row">
+            <input id="app-input" class="input sans" type="text" placeholder="例:途虎养车 / 微信支付 / Telegram">
+            <select id="app-country" class="select">
+                <option value="cn" selected>中国</option>
+                <option value="us">美国</option>
+                <option value="hk">香港</option>
+                <option value="jp">日本</option>
+                <option value="tw">台湾</option>
+                <option value="gb">英国</option>
+            </select>
+            <button id="app-btn" class="btn">搜索</button>
+        </div>
+        <div class="hint">来源:Apple iTunes Search API · 公开 · 限 20 次/分钟</div>
+        <div id="app-results"></div>
+    </div>
+
+    <!-- WeChat Mini-Program -->
+    <div class="pane" data-pane="weapp">
+        <div class="form-row">
+            <input id="weapp-input" class="input" type="text" placeholder="wx27d20205249c56a3 或含 appid 的链接">
+            <button id="weapp-btn" class="btn">查询</button>
+        </div>
+        <div class="hint">来源:微信公众平台 · 仅插件型小程序可查 · 不需登录</div>
+        <div id="weapp-status"></div>
+    </div>
+
+    <!-- Image URL -->
+    <div class="pane" data-pane="url">
+        <div class="form-row">
+            <input id="url-input" class="input" type="text" placeholder="https://example.com/logo.png">
+            <button id="url-btn" class="btn">载入</button>
+        </div>
+        <div class="hint">支持 PNG / JPG / WebP / SVG · 通过 Worker 反代,绕跨域和防盗链</div>
+        <div id="url-status"></div>
+    </div>
+
+    <!-- Local upload -->
+    <div class="pane" data-pane="upload">
+        <label class="drop" id="drop-zone">
+            <div class="drop-icon">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+            </div>
+            <div class="drop-text">拖文件到这里,或点击选择</div>
+            <div class="drop-sub">PNG · JPG · WebP · SVG</div>
+            <input type="file" id="file-input" accept="image/png,image/jpeg,image/webp,image/svg+xml">
+        </label>
+        <div id="upload-status"></div>
+    </div>
+
+    <!-- Editor (shows once an image is loaded) -->
+    <section id="editor" style="display:none;"></section>
+
+    <!-- Recent exports (shows once user has exported anything) -->
+    <section id="history-strip" class="history-strip" style="display:none;"></section>
+
+    <footer class="foot">
+        <span>© <a href="https://github.com/MaYIHEI/rawpin" target="_blank" rel="noopener">MaYIHEI/rawpin</a> · MIT</span>
+        <span>配套 <a href="https://github.com/MaYIHEI/pin" target="_blank" rel="noopener">pin</a> · <a href="https://github.com/MaYIHEI/paperclip" target="_blank" rel="noopener">paperclip</a></span>
+    </footer>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+(() => {
+
+// ===== config =====
+const API_BASE = '';     // same-origin: Pages Functions handle /api/* and /img
+const PRESET_SIZES = [128, 256, 512, 1024];
+const DEFAULT_SIZE = 256;
+const DEFAULT_RADIUS_PCT = 22;     // iOS-ish "squircle" approximation
+const HISTORY_KEY = 'rawpin_recent_exports';
+const HISTORY_MAX = 6;
+
+// ===== state =====
+const state = {
+    src: null,          // currently-loaded HTMLImageElement (raw)
+    sourceLabel: '',    // display label for editor head
+    sourceMeta: '',     // smaller line under label
+    suggestedName: '',  // default filename stem
+    size: DEFAULT_SIZE,
+    radiusPct: DEFAULT_RADIUS_PCT,
+    filename: '',
+};
+
+// ===== util =====
+const $ = (id) => document.getElementById(id);
+
+function escapeHtml(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function toast(msg, ms = 2000) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), ms);
+}
+
+// Normalize a name into a pin-safe filename stem.
+// Lowercase, ASCII letters/digits/hyphens only. Strips CJK and punctuation;
+// if nothing survives, fall back to "icon".
+function toSafeFilename(s) {
+    if (!s) return 'icon';
+    let v = String(s).trim().toLowerCase();
+    v = v.replace(/[\s_]+/g, '-');
+    v = v.replace(/[^a-z0-9-]/g, '');
+    v = v.replace(/-+/g, '-').replace(/^-|-$/g, '');
+    return v || 'icon';
+}
+
+// ===== tabs =====
+document.querySelectorAll('.tab').forEach(t => {
+    t.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+        document.querySelectorAll('.pane').forEach(x => x.classList.remove('active'));
+        t.classList.add('active');
+        document.querySelector(`.pane[data-pane="${t.dataset.tab}"]`).classList.add('active');
+    });
+});
+
+// App Store result -> a clean filename stem. Logic:
+//   1. Take the bundleId, split on dots.
+//   2. Drop generic prefixes (com, cn, org, net, io, app) and trailing platform tags
+//      (ios, android, app, mobile, mm, hd).
+//   3. Of what's left, prefer the longest segment — that's usually the product name.
+//   4. Otherwise fall back to the app name; otherwise "icon".
+const FILENAME_DROP = new Set([
+    'com', 'cn', 'org', 'net', 'io', 'co', 'me', 'us', 'app', 'apps',
+    'ios', 'iphone', 'ipad', 'android', 'mobile', 'mm', 'hd', 'cn-app',
+    'inc', 'ltd', 'tech', 'studio', 'studios', 'games',
+]);
+function suggestFilename(name, bundleId) {
+    if (bundleId) {
+        const segs = bundleId.toLowerCase().split('.')
+            .map(toSafeFilename)
+            .filter(s => s && s !== 'icon' && !FILENAME_DROP.has(s) && s.length >= 3);
+        if (segs.length) {
+            // pick longest (most meaningful) segment
+            segs.sort((a, b) => b.length - a.length);
+            return segs[0];
+        }
+    }
+    const fromName = toSafeFilename(name);
+    return fromName !== 'icon' ? fromName : 'icon';
+}
+
+
+async function searchApp() {
+    const term = $('app-input').value.trim();
+    const country = $('app-country').value;
+    if (!term) { toast('请输入应用名'); return; }
+
+    const btn = $('app-btn');
+    btn.disabled = true; btn.textContent = '搜索中';
+    const out = $('app-results');
+    out.innerHTML = '<div class="empty"><span class="spin"></span>正在向 iTunes 查询...</div>';
+
+    try {
+        const resp = await fetch(`${API_BASE}/api/search-app?term=${encodeURIComponent(term)}&country=${country}&limit=12`);
+        const data = await resp.json();
+        if (!data.ok) {
+            out.innerHTML = `<div class="error"><div class="error-title">搜索失败</div><div class="error-body">${escapeHtml(data.error || '未知错误')}</div></div>`;
+            return;
+        }
+        if (!data.results.length) {
+            out.innerHTML = '<div class="empty">没找到匹配应用,试试换个关键词或换地区</div>';
+            return;
+        }
+        renderAppResults(data.results);
+    } catch (e) {
+        out.innerHTML = '<div class="error"><div class="error-title">网络异常</div><div class="error-body">检查网络或 Worker 是否部署</div></div>';
+    } finally {
+        btn.disabled = false; btn.textContent = '搜索';
+    }
+}
+
+function renderAppResults(items) {
+    const out = $('app-results');
+    out.innerHTML = '<div class="results"></div>';
+    const grid = out.querySelector('.results');
+    items.forEach((it) => {
+        const card = document.createElement('div');
+        card.className = 'result-card';
+        // use 100px preview for fast load, but pass icon1024 to editor
+        card.innerHTML = `
+            <img class="result-img" src="${escapeHtml(it.icon100 || it.icon512)}" alt="${escapeHtml(it.name)}" loading="lazy">
+            <div class="result-name">${escapeHtml(it.name)}</div>
+            <div class="result-author">${escapeHtml(it.author || '')}</div>
+        `;
+        card.addEventListener('click', () => {
+            grid.querySelectorAll('.result-card').forEach(c => c.classList.remove('picked'));
+            card.classList.add('picked');
+            loadIntoEditor({
+                url: it.icon1024 || it.icon512 || it.icon100,
+                proxied: true,
+                label: it.name,
+                meta: `${it.author || ''} · ${it.bundleId || ''}`,
+                suggested: suggestFilename(it.name, it.bundleId, it.author),
+            });
+        });
+        grid.appendChild(card);
+    });
+}
+
+// ===== WeChat Mini-Program =====
+async function loadWeapp() {
+    const raw = $('weapp-input').value.trim();
+    const m = raw.match(/wx[a-f0-9]{16}/i);
+    if (!m) { toast('需要 wx 开头 + 16 位十六进制的 AppID'); return; }
+    const appid = m[0].toLowerCase();
+    $('weapp-input').value = appid;
+
+    const btn = $('weapp-btn');
+    btn.disabled = true; btn.textContent = '查询中';
+    const status = $('weapp-status');
+    status.innerHTML = '<div class="empty"><span class="spin"></span>正在查询微信公众平台...</div>';
+
+    try {
+        const resp = await fetch(`${API_BASE}/api/weapp-info?appid=${appid}`);
+        const data = await resp.json();
+        if (!data.ok) {
+            status.innerHTML = `<div class="error"><div class="error-title">${resp.status === 404 ? '没找到这个小程序' : '查询失败'}</div><div class="error-body">${escapeHtml(data.error || '可能是非插件型小程序,公开页面查不到')}</div></div>`;
+            return;
+        }
+        if (!data.logo) {
+            status.innerHTML = '<div class="error"><div class="error-title">没拿到 Logo</div><div class="error-body">页面结构可能已变,请反馈 issue</div></div>';
+            return;
+        }
+        // load into editor via proxy (avoids hotlink + CORS issues from wx.qlogo.cn)
+        await loadIntoEditor({
+            url: data.logo,
+            proxied: true,
+            label: data.name || appid,
+            meta: appid,
+            suggested: toSafeFilename(appid.replace(/^wx/, '')).slice(0, 12) || 'weapp',
+        });
+        status.innerHTML = '';
+    } catch (e) {
+        status.innerHTML = `<div class="error"><div class="error-title">网络异常</div><div class="error-body">${escapeHtml(e.message || String(e))}</div></div>`;
+    } finally {
+        btn.disabled = false; btn.textContent = '查询';
+    }
+}
+
+// ===== URL fetch =====
+async function loadUrl() {
+    const url = $('url-input').value.trim();
+    if (!url) { toast('请输入图片 URL'); return; }
+    if (!/^https?:\/\//i.test(url)) { toast('URL 需以 http(s):// 开头'); return; }
+
+    const btn = $('url-btn');
+    btn.disabled = true; btn.textContent = '载入中';
+    const status = $('url-status');
+    status.innerHTML = '<div class="empty"><span class="spin"></span>通过 Worker 反代中...</div>';
+
+    try {
+        // For arbitrary URLs we go through /img?open=1 — which allows any https host.
+        // Worker still checks content-type starts with image/.
+        const proxied = `${API_BASE}/img?open=1&url=${encodeURIComponent(url)}`;
+        await loadIntoEditor({
+            url: url,
+            proxiedUrl: proxied,
+            label: '从 URL 载入',
+            meta: url,
+            suggested: toSafeFilename(url.split('/').pop().split('?')[0].split('.')[0]),
+        });
+        status.innerHTML = '';
+    } catch (e) {
+        status.innerHTML = `<div class="error"><div class="error-title">载入失败</div><div class="error-body">${escapeHtml(e.message || String(e))}</div></div>`;
+    } finally {
+        btn.disabled = false; btn.textContent = '载入';
+    }
+}
+
+// ===== Local upload =====
+function bindUpload() {
+    const drop = $('drop-zone');
+    const input = $('file-input');
+
+    drop.addEventListener('click', () => input.click());
+
+    input.addEventListener('change', () => {
+        const f = input.files && input.files[0];
+        if (f) handleFile(f);
+    });
+
+    ['dragenter', 'dragover'].forEach(ev => {
+        drop.addEventListener(ev, (e) => {
+            e.preventDefault(); e.stopPropagation();
+            drop.classList.add('dragging');
+        });
+    });
+    ['dragleave', 'drop'].forEach(ev => {
+        drop.addEventListener(ev, (e) => {
+            e.preventDefault(); e.stopPropagation();
+            drop.classList.remove('dragging');
+        });
+    });
+    drop.addEventListener('drop', (e) => {
+        const f = e.dataTransfer.files && e.dataTransfer.files[0];
+        if (f) handleFile(f);
+    });
+}
+async function handleFile(file) {
+    if (!file.type.startsWith('image/')) { toast('请选择图片文件'); return; }
+    const status = $('upload-status');
+    status.innerHTML = '<div class="empty"><span class="spin"></span>读取中...</div>';
+    try {
+        const dataUrl = await readAsDataURL(file);
+        const stem = (file.name || '').replace(/\.[^.]+$/, '');
+        await loadIntoEditor({
+            url: dataUrl,
+            proxiedUrl: dataUrl,  // already in-memory, no proxy needed
+            label: file.name,
+            meta: `${(file.size / 1024).toFixed(1)} KB · ${file.type}`,
+            suggested: toSafeFilename(stem),
+        });
+        status.innerHTML = '';
+    } catch (e) {
+        status.innerHTML = `<div class="error"><div class="error-title">读取失败</div><div class="error-body">${escapeHtml(e.message || String(e))}</div></div>`;
+    }
+}
+function readAsDataURL(file) {
+    return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = () => reject(new Error('FileReader failed'));
+        r.readAsDataURL(file);
+    });
+}
+
+// ===== Editor =====
+function loadIntoEditor({ url, proxiedUrl, proxied = false, label, meta, suggested }) {
+    return new Promise((resolve, reject) => {
+        const src = proxiedUrl
+            ? proxiedUrl
+            : (proxied ? `${API_BASE}/img?url=${encodeURIComponent(url)}` : url);
+
+        const img = new Image();
+        img.crossOrigin = 'anonymous';   // required so canvas can read pixels
+        img.onload = () => {
+            state.src = img;
+            state.sourceLabel = label;
+            state.sourceMeta = meta;
+            state.suggestedName = suggested || 'icon';
+            state.filename = state.suggestedName;
+            renderEditor();
+            resolve();
+        };
+        img.onerror = () => {
+            reject(new Error('图片加载失败 — 可能是格式不支持或源站拒绝'));
+        };
+        img.src = src;
+    });
+}
+
+function renderEditor() {
+    const ed = $('editor');
+    ed.style.display = '';
+    ed.innerHTML = `
+        <div class="editor-head">
+            <div class="editor-source">
+                ${escapeHtml(state.sourceLabel)}
+                ${state.sourceMeta ? `<small>${escapeHtml(state.sourceMeta)}</small>` : ''}
+            </div>
+        </div>
+        <div class="editor-body">
+            <div class="preview-box">
+                <canvas id="preview-canvas" class="preview-canvas" width="${state.size}" height="${state.size}"></canvas>
+            </div>
+            <div class="controls">
+                <div class="control-row">
+                    <label class="control-label">尺寸</label>
+                    <div class="size-toggle">
+                        ${PRESET_SIZES.map(s =>
+                            `<button class="size-btn ${s === state.size ? 'active' : ''}" data-size="${s}">${s}px</button>`
+                        ).join('')}
+                    </div>
+                </div>
+                <div class="control-row">
+                    <label class="control-label">圆角(${state.radiusPct}% · 0=正方,50=圆形)</label>
+                    <input type="range" class="slider" id="radius-slider" min="0" max="50" step="1" value="${state.radiusPct}">
+                </div>
+                <div class="control-row">
+                    <label class="control-label">文件名</label>
+                    <input type="text" class="name-input" id="name-input" value="${escapeHtml(state.filename)}">
+                </div>
+            </div>
+        </div>
+        <div class="actions">
+            <button class="action primary" id="dl-btn">下载 PNG</button>
+            <button class="action" id="copy-clip-btn">复制图片</button>
+            <button class="action" id="copy-b64-btn">复制 base64</button>
+            <button class="action" id="reset-btn">重置</button>
+        </div>
+    `;
+    // wire up
+    ed.querySelectorAll('.size-btn').forEach(b => {
+        b.addEventListener('click', () => {
+            state.size = parseInt(b.dataset.size, 10);
+            renderEditor();
+            ed.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        });
+    });
+    const slider = $('radius-slider');
+    slider.addEventListener('input', () => {
+        state.radiusPct = parseInt(slider.value, 10);
+        // update label only
+        const lbl = slider.parentElement.querySelector('.control-label');
+        lbl.textContent = `圆角(${state.radiusPct}% · 0=正方,50=圆形)`;
+        drawPreview();
+    });
+    $('name-input').addEventListener('input', (e) => {
+        // sanitize on the fly
+        const safe = toSafeFilename(e.target.value);
+        state.filename = safe;
+        if (e.target.value !== safe) {
+            const pos = e.target.selectionStart;
+            e.target.value = safe;
+            try { e.target.setSelectionRange(pos - 1, pos - 1); } catch {}
+        }
+    });
+    $('dl-btn').addEventListener('click', downloadPng);
+    $('copy-clip-btn').addEventListener('click', copyToClipboard);
+    $('copy-b64-btn').addEventListener('click', copyBase64);
+    $('reset-btn').addEventListener('click', () => {
+        state.size = DEFAULT_SIZE;
+        state.radiusPct = DEFAULT_RADIUS_PCT;
+        state.filename = state.suggestedName;
+        renderEditor();
+    });
+
+    drawPreview();
+}
+
+function drawPreview() {
+    const canvas = $('preview-canvas');
+    if (!canvas || !state.src) return;
+    const size = state.size;
+    canvas.width = size; canvas.height = size;
+
+    // cap on-screen size at 220 (visual), but render at full size for export
+    canvas.style.maxWidth = '220px';
+    canvas.style.maxHeight = '220px';
+
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, size, size);
+
+    // round corners
+    const radius = (state.radiusPct / 100) * size;
+    if (radius > 0) {
+        ctx.save();
+        roundedRectPath(ctx, 0, 0, size, size, radius);
+        ctx.clip();
+    }
+
+    // draw source, "cover" fit (square crop, center)
+    const img = state.src;
+    const ratio = img.naturalWidth / img.naturalHeight;
+    let sx = 0, sy = 0, sw = img.naturalWidth, sh = img.naturalHeight;
+    if (ratio > 1) {
+        // wider than tall — crop sides
+        sw = img.naturalHeight;
+        sx = (img.naturalWidth - sw) / 2;
+    } else if (ratio < 1) {
+        // taller than wide — crop top/bottom
+        sh = img.naturalWidth;
+        sy = (img.naturalHeight - sh) / 2;
+    }
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, size, size);
+
+    if (radius > 0) ctx.restore();
+}
+
+function roundedRectPath(ctx, x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y,     x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x,     y + h, r);
+    ctx.arcTo(x,     y + h, x,     y,     r);
+    ctx.arcTo(x,     y,     x + w, y,     r);
+    ctx.closePath();
+}
+
+// ===== export =====
+async function downloadPng() {
+    const canvas = $('preview-canvas');
+    if (!canvas) return;
+    const btn = $('dl-btn');
+    const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = '导出中';
+
+    try {
+        const blob = await canvasToBlob(canvas);
+        const filename = `${state.filename || 'icon'}.png`;
+        // blob download (works on iOS Safari, unlike <a download href=dataURL>)
+        const objUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = objUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
+        toast('已下载 ' + filename);
+        pushHistory(state.filename, state.sourceLabel);
+    } catch (e) {
+        // tainted canvas? cross-origin image without CORS headers
+        toast('导出失败:可能是图片源不支持跨域读取');
+    } finally {
+        btn.disabled = false; btn.textContent = orig;
+    }
+}
+
+async function copyToClipboard() {
+    const canvas = $('preview-canvas');
+    if (!canvas) return;
+    try {
+        const blob = await canvasToBlob(canvas);
+        if (!navigator.clipboard || !window.ClipboardItem) {
+            toast('当前浏览器不支持复制图片到剪贴板');
+            return;
+        }
+        await navigator.clipboard.write([
+            new ClipboardItem({ 'image/png': blob })
+        ]);
+        toast('已复制到剪贴板');
+    } catch (e) {
+        toast('复制失败:' + (e.message || e));
+    }
+}
+
+// Copy the PNG as a `data:image/png;base64,...` string. Useful for pasting into
+// GitHub web Markdown / docs without uploading the file first.
+async function copyBase64() {
+    const canvas = $('preview-canvas');
+    if (!canvas) return;
+    try {
+        const dataUrl = canvas.toDataURL('image/png');
+        if (!navigator.clipboard) {
+            toast('当前浏览器不支持剪贴板 API');
+            return;
+        }
+        await navigator.clipboard.writeText(dataUrl);
+        // dataUrl is long; show the size, not the content
+        const kb = Math.round(dataUrl.length / 1024);
+        toast(`已复制 base64(~${kb} KB)`);
+    } catch (e) {
+        toast('复制失败:' + (e.message || e));
+    }
+}
+
+function canvasToBlob(canvas) {
+    return new Promise((resolve, reject) => {
+        canvas.toBlob((b) => {
+            if (b) resolve(b);
+            else reject(new Error('canvas.toBlob returned null'));
+        }, 'image/png');
+    });
+}
+
+// ===== recent exports history =====
+// We store small (96×96) thumbnail dataURLs in localStorage so the history
+// strip can render without re-fetching upstream. Capped at HISTORY_MAX items.
+function loadHistory() {
+    try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); }
+    catch { return []; }
+}
+function saveHistory(list) {
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(list)); } catch {}
+}
+async function pushHistory(filename, sourceLabel) {
+    const canvas = $('preview-canvas');
+    if (!canvas) return;
+    // generate small thumbnail to keep localStorage small
+    const thumb = document.createElement('canvas');
+    thumb.width = 96; thumb.height = 96;
+    thumb.getContext('2d').drawImage(canvas, 0, 0, 96, 96);
+    const thumbUrl = thumb.toDataURL('image/png');
+
+    // full-size dataURL for re-loading into editor
+    const fullUrl = canvas.toDataURL('image/png');
+
+    let list = loadHistory().filter(h => h.filename !== filename);
+    list.unshift({
+        filename,
+        label: sourceLabel || filename,
+        thumb: thumbUrl,
+        full: fullUrl,
+        t: Date.now(),
+    });
+    list = list.slice(0, HISTORY_MAX);
+    saveHistory(list);
+    renderHistoryStrip();
+}
+function removeHistory(filename) {
+    saveHistory(loadHistory().filter(h => h.filename !== filename));
+    renderHistoryStrip();
+}
+function renderHistoryStrip() {
+    const strip = $('history-strip');
+    const list = loadHistory();
+    if (!list.length) { strip.innerHTML = ''; strip.style.display = 'none'; return; }
+    strip.style.display = '';
+    strip.innerHTML = `
+        <div class="history-label">最近导出</div>
+        <div class="history-items">
+            ${list.map(h => `
+                <div class="history-item" data-filename="${escapeHtml(h.filename)}">
+                    <img src="${h.thumb}" alt="${escapeHtml(h.filename)}">
+                    <div class="history-name">${escapeHtml(h.filename)}</div>
+                    <button class="history-x" title="移除">×</button>
+                </div>
+            `).join('')}
+        </div>
+    `;
+    strip.querySelectorAll('.history-item').forEach((el) => {
+        const fn = el.dataset.filename;
+        const item = loadHistory().find(h => h.filename === fn);
+        if (!item) return;
+        el.querySelector('img').addEventListener('click', () => reloadFromHistory(item));
+        el.querySelector('.history-name').addEventListener('click', () => reloadFromHistory(item));
+        el.querySelector('.history-x').addEventListener('click', (e) => {
+            e.stopPropagation();
+            removeHistory(fn);
+        });
+    });
+}
+async function reloadFromHistory(item) {
+    await loadIntoEditor({
+        url: item.full,
+        proxiedUrl: item.full,
+        label: item.label,
+        meta: '来自历史 · ' + new Date(item.t).toLocaleString('zh-CN', { hour12: false }),
+        suggested: item.filename,
+    });
+    $('editor').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// ===== bindings =====
+$('app-btn').addEventListener('click', searchApp);
+$('app-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') searchApp(); });
+$('weapp-btn').addEventListener('click', loadWeapp);
+$('weapp-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadWeapp(); });
+$('url-btn').addEventListener('click', loadUrl);
+$('url-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadUrl(); });
+bindUpload();
+renderHistoryStrip();
+
+})();
+</script>
+</body>
+</html>

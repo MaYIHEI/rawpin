@@ -733,8 +733,14 @@ async function loadWeapp() {
             status.innerHTML = `<div class="error"><div class="error-title">${resp.status === 404 ? '没找到这个小程序' : '查询失败'}</div><div class="error-body">${escapeHtml(data.error || '可能是非插件型小程序,公开页面查不到')}</div></div>`;
             return;
         }
+        // 微信公众平台对非插件型小程序也会返回 200 + 空骨架页面
+        // (所有字段显示"未填写"),此时 logo 和 name 都是 null
+        if (!data.logo && !data.name) {
+            status.innerHTML = '<div class="error"><div class="error-title">查不到这个小程序</div><div class="error-body">仅插件型小程序在微信公众平台有公开信息<br>(途虎、泡泡玛特等是插件型;名创优品等普通小程序查不到)</div></div>';
+            return;
+        }
         if (!data.logo) {
-            status.innerHTML = '<div class="error"><div class="error-title">没拿到 Logo</div><div class="error-body">页面结构可能已变,请反馈 issue</div></div>';
+            status.innerHTML = '<div class="error"><div class="error-title">拿到名字但没拿到 Logo</div><div class="error-body">页面结构可能已变,请反馈 issue</div></div>';
             return;
         }
         // load into editor via proxy (avoids hotlink + CORS issues from wx.qlogo.cn)

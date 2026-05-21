@@ -32,6 +32,7 @@ export async function onRequest(context) {
 
     if (url.pathname === '/api/search-app') return handleSearchApp(url);
     if (url.pathname === '/api/weapp-info') return handleWeappInfo(url);
+    if (url.pathname === '/api/debug')      return handleDebug(url);
     if (url.pathname === '/img')            return handleImg(url);
 
     return next();
@@ -116,6 +117,40 @@ function cleanUrl(u) {
 }
 function upgradeHttps(u) {
     return String(u).replace(/^http:\/\//i, 'https://');
+}
+
+// ---------------- debug ----------------
+//
+// /api/debug?appid=wx...
+// Fetches the same WeChat plugin profile page and returns the stripped HTML
+// (no <script>/<style>) so we can update the scrape regex against real DOM.
+async function handleDebug(url) {
+    const raw = (url.searchParams.get('appid') || '').trim();
+    const m = raw.match(/wx[a-f0-9]{16}/i);
+    if (!m) return json({ ok: false, error: 'invalid appid format' }, 400);
+    const appid = m[0].toLowerCase();
+
+    const target = `https://mp.weixin.qq.com/wxopen/pluginbasicprofile?action=intro&appid=${appid}&token=&lang=zh_CN`;
+    let resp, html;
+    try {
+        resp = await fetch(target, {
+            headers: { 'User-Agent': UA, 'Accept-Language': 'zh-CN,zh;q=0.9' },
+        });
+        html = await resp.text();
+    } catch (e) {
+        return json({ ok: false, error: 'fetch failed', detail: String(e) }, 502);
+    }
+
+    const stripped = html
+        .replace(/<script[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/<!--[\s\S]*?-->/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    return new Response(stripped, {
+        headers: { 'Content-Type': 'text/html; charset=utf-8', ...CORS },
+    });
 }
 
 // ---------------- iTunes Search ----------------

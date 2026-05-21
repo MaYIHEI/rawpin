@@ -858,8 +858,25 @@ function loadIntoEditor({ url, proxiedUrl, proxied = false, label, meta, suggest
             renderEditor();
             resolve();
         };
-        img.onerror = () => {
-            reject(new Error('图片加载失败 — 可能是格式不支持或源站拒绝'));
+        img.onerror = async () => {
+            // On error, re-fetch /img to surface the actual upstream reason.
+            // Without this the user only sees a generic "image load failed".
+            let detail = '';
+            if (/^\//.test(src)) {
+                try {
+                    const r = await fetch(src);
+                    const ct = r.headers.get('content-type') || '';
+                    if (ct.includes('json')) {
+                        const j = await r.json();
+                        detail = `${j.error || 'unknown'}${j.host ? ` (${j.host})` : ''}${j.status ? ` [HTTP ${j.status}]` : ''}`;
+                    } else {
+                        detail = `HTTP ${r.status}`;
+                    }
+                } catch (e) {
+                    detail = '反代探测失败';
+                }
+            }
+            reject(new Error(detail ? `加载失败: ${detail}` : '图片加载失败 — 可能是格式不支持或源站拒绝'));
         };
         img.src = src;
     });

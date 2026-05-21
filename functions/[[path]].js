@@ -72,14 +72,29 @@ async function handleWeappInfo(url) {
         /<strong[^>]+class="[^"]*mpui-setting__name[^"]*"[^>]*>\s*([^<]+?)\s*<\/strong>/i,
     ]);
 
-    if (!logo && !name) return json({ ok: false, error: 'failed to parse', appid }, 502);
+    const normalizedLogo = normalizeLogoUrl(logo);
+    if (!normalizedLogo && !name) return json({ ok: false, error: 'failed to parse', appid }, 502);
 
     return json({
         ok: true,
         appid,
         name: name || null,
-        logo: logo ? upgradeHttps(cleanUrl(logo)) : null,
+        logo: normalizedLogo,
     });
+}
+
+// Normalize whatever the first regex catches into a real https URL,
+// or return null when it's a placeholder like "/0" or anything that
+// clearly isn't an image host.
+function normalizeLogoUrl(raw) {
+    if (!raw) return null;
+    let u = cleanUrl(String(raw).trim());
+    if (u.startsWith('//')) u = 'https:' + u;
+    else if (u.startsWith('http://')) u = 'https://' + u.slice(7);
+    if (!/^https:\/\//i.test(u)) return null;
+    // sanity: must be on a known WeChat image CDN
+    if (!/(qlogo\.cn|qpic\.cn)/i.test(u)) return null;
+    return u;
 }
 
 function pickFirst(html, patterns) {

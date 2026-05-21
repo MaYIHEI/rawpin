@@ -164,15 +164,18 @@ function upscaleArtwork(u) {
 
 // ---------------- image proxy ----------------
 
-const ALLOWED_IMG_HOST = /(^|\.)(mzstatic\.com|apple\.com|mmbiz\.qpic\.cn|wx\.qlogo\.cn|thirdwx\.qlogo\.cn)$/i;
+// Match by suffix on known image-CDN parent domains. wx.qlogo.cn often resolves
+// through subdomains like shp.qpic.cn / wxapp.tc.qq.com / thirdwx.qlogo.cn —
+// matching on the parent suffix covers them all without opening up arbitrary hosts.
+const ALLOWED_IMG_HOST = /(^|\.)(mzstatic\.com|apple\.com|qpic\.cn|qlogo\.cn)$/i;
 
 async function handleImg(url) {
     const target = url.searchParams.get('url');
-    if (!target) return new Response('missing url', { status: 400, headers: CORS });
+    if (!target) return json({ ok: false, error: 'missing url' }, 400);
 
     let parsed;
     try { parsed = new URL(target); }
-    catch { return new Response('bad url', { status: 400, headers: CORS }); }
+    catch { return json({ ok: false, error: 'bad url' }, 400); }
 
     // Two modes:
     //   strict (default): only known image hosts (Apple CDN + WeChat CDN)
@@ -180,32 +183,36 @@ async function handleImg(url) {
     const open = url.searchParams.get('open') === '1';
 
     if (!open && !ALLOWED_IMG_HOST.test(parsed.hostname)) {
-        return new Response('host not in allowlist', { status: 403, headers: CORS });
+        return json({ ok: false, error: 'host not in allowlist', host: parsed.hostname }, 403);
     }
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-        return new Response('bad protocol', { status: 400, headers: CORS });
+        return json({ ok: false, error: 'bad protocol' }, 400);
     }
 
     let upstream;
     try {
+        // qlogo.cn / qpic.cn occasionally hotlink-protect by Referer.
+        // mp.weixin.qq.com is the actual page that serves these images.
+        const isWxImg = /(qlogo\.cn|qpic\.cn)$/i.test(parsed.hostname);
+        const referer = isWxImg ? 'https://mp.weixin.qq.com/' : parsed.origin + '/';
         upstream = await fetch(target, {
             headers: {
                 'User-Agent': UA,
-                'Referer': parsed.origin + '/',
+                'Referer': referer,
             },
             cf: { cacheTtl: 86400, cacheEverything: true },
         });
-    } catch {
-        return new Response('upstream fetch failed', { status: 502, headers: CORS });
+    } catch (e) {
+        return json({ ok: false, error: 'upstream fetch failed', detail: String(e) }, 502);
     }
 
     if (!upstream.ok) {
-        return new Response('upstream error', { status: upstream.status, headers: CORS });
+        return json({ ok: false, error: 'upstream error', status: upstream.status, host: parsed.hostname }, 502);
     }
 
     const ct = upstream.headers.get('content-type') || '';
     if (!ct.startsWith('image/')) {
-        return new Response('not an image', { status: 415, headers: CORS });
+        return json({ ok: false, error: 'not an image', contentType: ct, host: parsed.hostname }, 415);
     }
 
     const headers = new Headers(CORS);

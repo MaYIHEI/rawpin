@@ -988,20 +988,15 @@ function drawPreview() {
         ctx.clip();
     }
 
-    // draw source, "cover" fit (square crop, center)
+    // draw source, "contain" fit (full image preserved, centered, transparent padding)
+    // square sources fill exactly; non-square sources letterbox instead of getting cropped
     const img = state.src;
-    const ratio = img.naturalWidth / img.naturalHeight;
-    let sx = 0, sy = 0, sw = img.naturalWidth, sh = img.naturalHeight;
-    if (ratio > 1) {
-        // wider than tall — crop sides
-        sw = img.naturalHeight;
-        sx = (img.naturalWidth - sw) / 2;
-    } else if (ratio < 1) {
-        // taller than wide — crop top/bottom
-        sh = img.naturalWidth;
-        sy = (img.naturalHeight - sh) / 2;
-    }
-    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, size, size);
+    const scale = Math.min(size / img.naturalWidth, size / img.naturalHeight);
+    const dw = img.naturalWidth * scale;
+    const dh = img.naturalHeight * scale;
+    const dx = (size - dw) / 2;
+    const dy = (size - dh) / 2;
+    ctx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight, dx, dy, dw, dh);
 
     if (radius > 0) ctx.restore();
 }
